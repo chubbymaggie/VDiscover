@@ -72,7 +72,7 @@ class TypePrinter:
 
     return r
 
-  def print_events(self, events):
+  def print_events(self, label, events):
 
     r = list()
 
@@ -81,22 +81,23 @@ class TypePrinter:
 
     events = r
 
-    x = hash(tuple(events))
+    #x = hash(tuple(events))
 
-    if (x in self.tests):
-      return
+    #if (x in self.tests):
+    #  return
 
-    self.tests.add(x)
+    #self.tests.add(x)
 
     trace = ""
 
     for x,y in events:
-      trace = trace+x+"="+y+" "
+      trace = trace + ("%s=%s " % (x,y))
 
-    row = [self.pname,trace]
+    row = [self.pname+":"+label,trace]
 
     if self.mclass is not None:
       row.append(self.mclass)
 
     self.csvwriter.writerow(row)
     self.outfile.flush()
+    return row

@@ -1,72 +1,58 @@
-import random
-import gzip
-import sys
-import csv
-import subprocess
+"""
+This file is part of VDISCOVER.
+
+VDISCOVER is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+VDISCOVER is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with VDISCOVER. If not, see <http://www.gnu.org/licenses/>.
+
+Copyright 2014 by G.Grieco
+"""
+
 import pickle
 
-from Pipeline import * 
-
-from sklearn.pipeline import Pipeline
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.feature_extraction.text import CountVectorizer
+from Utils import *
+from Pipeline import *
 from sklearn.metrics import confusion_matrix
 
-csv.field_size_limit(sys.maxsize)
+def TrainScikitLearn(model_file, train_file, valid_file, ftype, nsamples):
 
-def file_len(fname):
+  #csvreader = open_csv(train_file)
+  modelfile = open_model(model_file)
+  train_programs, train_features, train_classes = read_traces(train_file, nsamples, cut=None)
+  print "using", len(train_features),"examples to train."
 
-  if ".gz" in fname:
-    cat = "zcat"
-  else:
-    cat = "cat"
+  train_dict = dict()
+  train_dict[ftype] = train_features
 
-  p = subprocess.Popen(cat + " " + fname + " | wc -l", shell=True, stdout=subprocess.PIPE, 
-                                                                     stderr=subprocess.PIPE)
-  result, err = p.communicate()
-  if p.returncode != 0:
-      raise IOError(err)
-  return int(result.strip().split()[0])
+  print "Transforming data and fitting model.."
+  model = make_train_pipeline(ftype)
+  model.fit(train_dict,train_classes)
 
+  print "Done!"
+  #print model
+  #print confusion_matrix(train_classes, model.predict(train_dict))
 
-def make_pipeline(ftype):
-  
-  if ftype is "dynamic":
-    return Pipeline(steps=[
-         ('selector', ItemSelector(key='dynamic')),
-         ('dvectorizer', CountVectorizer(tokenizer=static_tokenizer, ngram_range=(2,2), lowercase=False)),
-         ('todense', DenseTransformer()),
-         ('classifier', RandomForestClassifier(n_estimators=1000, max_features=None, max_depth=100, class_weight="auto"))
-    ])
-  elif ftype is "static":
-    return Pipeline(steps=[
-         ('selector', ItemSelector(key='static')),
-         ('dvectorizer', CountVectorizer(tokenizer=static_tokenizer, ngram_range=(1,1), lowercase=False)),
-         ('todense', DenseTransformer()),
-         ('classifier', LogisticRegression(penalty="l2", C=1e-07, tol=1e-06))
-    ])
-  else:
-    assert(0)
+  print "Saving model to",model_file
+  modelfile.write(pickle.dumps(model))
 
-def Train(model_file, in_file, ftype, nsamples):
- 
-  if ".gz" in in_file:
-    infile = gzip.open(in_file, "r")
-  else:
-    infile = open(in_file, "r")
-  
-  if ".pklz" in model_file:
-    modelfile = gzip.open(model_file,"w+")
-  else:
-    modelfile = open(model_file,"w+")
- 
-  csvreader = csv.reader(infile, delimiter='\t')
+def TrainKeras(model_file, train_file, valid_file, ftype, nsamples):
+
+  csvreader = open_csv(train_file)
+  modelfile = open_model(model_file)
 
   train_features = []
   train_programs = []
   train_classes = []
-  
+
   print "Reading and sampling data to train..",
   if nsamples is None:
     for i,(program, features, cl) in enumerate(csvreader):
@@ -74,12 +60,12 @@ def Train(model_file, in_file, ftype, nsamples):
       train_features.append(features)
       train_classes.append(int(cl))
   else:
-    
+
     train_size = file_len(in_file)
     skip_until = random.randint(0,train_size - nsamples)
 
     for i,(program, features, cl) in enumerate(csvreader):
- 
+
       if i < skip_until:
         continue
       elif i - skip_until == nsamples:
@@ -88,25 +74,82 @@ def Train(model_file, in_file, ftype, nsamples):
       train_programs.append(program)
       train_features.append(features)
       train_classes.append(int(cl))
-  
-  print "using", len(train_features),"examples to train."
+  train_size = len(train_features)
+
+  assert(train_size == len(train_classes))
+
+  print "using", train_size,"examples to train."
 
   train_dict = dict()
-  train_dict[ftype] = train_features 
+  train_dict[ftype] = train_features
+  batch_size = 16
+  window_size = 25
 
-  print "Transforming data and fitting model.."
-  model = make_pipeline(ftype)
-  model.fit(train_dict,train_classes)
+  from keras.preprocessing.text import Tokenizer
 
-  print "Resulting model:"
-  print model
-  print confusion_matrix(train_classes, model.predict(train_dict))
+  tokenizer = Tokenizer(nb_words=None, filters="", lower=False, split=" ")
+  #print type(train_features[0])
+  tokenizer.fit_on_texts(train_features)
+  max_features = len(tokenizer.word_counts)
+
+  preprocessor = KerasPreprocessor(tokenizer, window_size, batch_size)
+
+  if valid_file is not None:
+    csvreader = open_csv(valid_file)
+
+    valid_features = []
+    valid_programs = []
+    valid_classes = []
+
+    print "Reading data to valid..",
+    for i,(program, features, cl) in enumerate(csvreader):
+      valid_programs.append(program)
+      valid_features.append(features)
+      valid_classes.append(int(cl))
+
+    print "using", len(train_features),"examples to valid."
+    #X_valid,y_valid = preprocessor.preprocess(valid_features, valid_classes)
+  else:
+    valid_features,train_features = train_features[0:int(0.1*train_size)], train_features[int(0.1*train_size):]
+    valid_classes,train_classes = train_classes[0:int(0.1*train_size)], train_classes[int(0.1*train_size):]
+
+  X_valid,y_valid = preprocessor.preprocess(valid_features, valid_classes, 500)
+  X_train,y_train = preprocessor.preprocess(train_features, train_classes, 10000)
+
+  from keras.models import Sequential
+  from keras.layers.core import Dense, Dropout, Activation
+  from keras.layers.embeddings import Embedding
+  from keras.layers.recurrent import LSTM, GRU
+  from keras.optimizers import Adam
+
+  print "Creating and compiling a LSTM.."
+  model = Sequential()
+  model.add(Embedding(max_features, 10))
+  model.add(LSTM(10, 32))
+  model.add(Dropout(0.50))
+  model.add(Dense(32, 1))
+  model.add(Activation('sigmoid'))
+
+  # try using different optimizers and different optimizer config
+  opt = Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8, kappa=1-1e-8)
+  model.compile(loss='binary_crossentropy', optimizer=opt, class_mode="binary")
+  #model.fit(X_train, y_train, batch_size=batch_size, nb_epoch=30, validation_data = (X_valid,y_valid), show_accuracy=True)
+  model.fit(X_train, y_train, batch_size=batch_size, nb_epoch=5, show_accuracy=True)
 
   print "Saving model to",model_file
-  modelfile.write(pickle.dumps(model))
 
-  #outfile = open(out_file, "a+")
-  #csvwriter = csv.writer(outfile, delimiter='\t')
+  modelfile.write(pickle.dumps(KerasPredictor(preprocessor,model,ftype)))
 
-  #model = pickle.load(gzip.open(model_file))
+
+def Train(model_file, train_file, valid_file, ttype, ftype, nsamples):
+  if ttype == "rf":
+    TrainScikitLearn(model_file, train_file, valid_file, ftype, nsamples)
+
+  elif ttype == "lstm":
+     try:
+       import keras
+     except:
+       print "Failed to import keras modules to perform LSTM training"
+       return
+     TrainKeras(model_file, train_file, valid_file, ftype, nsamples)
 

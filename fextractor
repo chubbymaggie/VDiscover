@@ -50,6 +50,11 @@ if __name__ == "__main__":
     # To help argparse to detect the number of columns correctly
     #os.environ['COLUMNS'] = str(os.popen('stty size', 'r').read().split()[1]) #str(shutil.get_terminal_size().columns)
 
+    if open("/proc/sys/kernel/randomize_va_space").read().strip() != "0":
+        print("Address space layout randomization (ASLR) is enabled, disable it before continue to use the cache")
+        print("Hint: # echo 0 > /proc/sys/kernel/randomize_va_space")
+        sys.exit(-1)
+
     # Arguments
     parser = argparse.ArgumentParser(description='Feature extraction of VDiscover')
     parser.add_argument("testcase", help="Testcase to analyze", type=str, default=None)
@@ -141,7 +146,7 @@ if __name__ == "__main__":
       files = GetFiles()
 
       original_inputs = RandomInputMutator(args + files, NullMutator)
-      expanded_input_generator = RandomInputMutator(args + files, RandomExpanderMutator)
+      #expanded_input_generator = RandomInputMutator(args + files, RandomExpanderMutator)
       mutated_input_generator = RandomInputMutator(args + files, RandomByteMutator)
 
       app = Process(program, envs, timeout, included_mods, ignored_mods, no_stdout = not show_stdout )
@@ -155,12 +160,12 @@ if __name__ == "__main__":
         print "Execution of",program,"failed!"
         exit(-1)
 
-      prt.print_events(original_events)
+      prt.print_events(program,original_events) 
 
-      for (i, (d, mutated)) in enumerate(expanded_input_generator):
+      for (i, (d, mutated)) in enumerate(mutated_input_generator):
 
         if i >= max_mut:
           break
 
         events = app.getData(prepare_inputs(mutated))
-        prt.print_events(events)
+        prt.print_events(program,events)
